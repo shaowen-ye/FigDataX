@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPen
-from PySide6.QtWidgets import QGraphicsEllipseItem
+from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsItem
+
+from ..models import DataPoint
 
 
 class MarkerItem(QGraphicsEllipseItem):
@@ -19,10 +23,37 @@ class MarkerItem(QGraphicsEllipseItem):
         self.setToolTip(label)
 
 
+class DataMarkerItem(MarkerItem):
+    """A data-point marker bound to a :class:`DataPoint` — selectable and draggable.
+
+    Dragging updates the bound point's pixel coordinates and calls ``on_moved`` so
+    the canvas can recompute data coordinates and notify the results table.
+    """
+
+    def __init__(self, point: DataPoint,
+                 on_moved: Optional[Callable[["DataMarkerItem"], None]] = None):
+        color = QColor("#ff7f0e") if point.manual else QColor("#2ca02c")
+        label = "manual point" if point.manual else "data point"
+        super().__init__(point.px, point.py, color, radius=4.5, label=label)
+        self.point = point
+        self._on_moved = on_moved
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemSelectedChange:
+            self.setPen(QPen(QColor("#e6194b") if value else QColor("black"),
+                             2 if value else 1))
+        elif change == QGraphicsItem.ItemScenePositionHasChanged:
+            self.point.px = self.pos().x()
+            self.point.py = self.pos().y()
+            self.point.manual = True
+            if self._on_moved is not None:
+                self._on_moved(self)
+        return super().itemChange(change, value)
+
+
 def calib_marker(px, py, axis: str) -> MarkerItem:
     color = QColor("#1f77b4") if axis == "x" else QColor("#d62728")
     return MarkerItem(px, py, color, radius=6.0, label=f"{axis}-calibration")
-
-
-def data_marker(px, py) -> MarkerItem:
-    return MarkerItem(px, py, QColor("#2ca02c"), radius=4.0, label="data point")

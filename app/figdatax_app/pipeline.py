@@ -22,10 +22,15 @@ def build_calibration(cal: Calibration) -> "eng.AxisCalibration":
 
 
 def extract_series(session: ExtractionSession, target_hsv, color_distance=30,
-                   subpixel=True) -> Series:
-    """Run color extraction for the session's active series and fill its points."""
+                   subpixel=True, bgr=None) -> Series:
+    """Run color extraction for the session's active series and fill its points.
+
+    ``bgr`` (a numpy image) takes precedence over ``session.image_path`` so PDF
+    crops and project-embedded images work without a file on disk.
+    """
     axis = build_calibration(session.calibration)
-    det = eng.extract_by_color_adaptive(session.image_path, target_hsv,
+    source = bgr if bgr is not None else session.image_path
+    det = eng.extract_by_color_adaptive(source, target_hsv,
                                         color_distance=color_distance,
                                         subpixel=subpixel, auto_widen=True)
     series = session.active_series()
