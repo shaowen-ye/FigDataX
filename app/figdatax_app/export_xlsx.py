@@ -55,6 +55,25 @@ def export_session(session: ExtractionSession, path: str) -> str:
     return path
 
 
+def export_chart_result(result, path: str, source: str = "") -> str:
+    """Write a single ChartResult (box/pie/heatmap) to a one-sheet workbook."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = result.kind[:31]
+    for c, head in enumerate(result.columns, start=1):
+        _bold(ws.cell(row=1, column=c, value=head))
+    for r, row in enumerate(result.rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    ws.freeze_panes = "A2"
+    if source:
+        ws.cell(row=len(result.rows) + 3, column=1, value=f"Source: {source}")
+    wb.save(path)
+    return path
+
+
 def export_workbook(path: str,
                     sessions: Optional[List[ExtractionSession]] = None,
                     tables: Optional[List] = None,

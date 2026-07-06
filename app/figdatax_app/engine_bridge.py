@@ -25,12 +25,15 @@ if REPO_ROOT not in sys.path:
 from scripts.figdatax import (  # noqa: E402
     auto_detect_plot_area, calibrate_axes_multipoint, AxisCalibration,
     extract_by_color_adaptive, auto_extract_scatter, detect_data_colors,
-    pick_color, hsv_of_bgr, create_validation_plot, __version__ as engine_version,
+    pick_color, hsv_of_bgr, create_validation_plot,
+    extract_boxplot, extract_pie, extract_heatmap,
+    __version__ as engine_version,
 )
 
 __all__ = [
     "auto_detect_plot_area", "calibrate_axes_multipoint", "AxisCalibration",
     "extract_by_color_adaptive", "auto_extract_scatter", "detect_data_colors",
-    "pick_color", "hsv_of_bgr", "create_validation_plot", "engine_version",
+    "pick_color", "hsv_of_bgr", "create_validation_plot",
+    "extract_boxplot", "extract_pie", "extract_heatmap", "engine_version",
     "REPO_ROOT",
 ]

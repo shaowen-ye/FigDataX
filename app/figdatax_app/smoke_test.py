@@ -150,6 +150,90 @@ def check_pdf_pipeline(win: MainWindow):
           f"{len(mentions)} mentions")
 
 
+def check_ai_layer():
+    """AI provider layer with the offline FakeProvider: figure→calibration suggestion,
+    frac→pixel mapping, applying confirmed ticks, and mention summarization."""
+    from .ai.assist import frac_to_pixel, suggest_calibration, summarize_mentions
+    from .ai.providers import ClaudeCliProvider, CodexCliProvider, FakeProvider
+    from .models import ExtractionSession
+    import cv2
+
+    fake = FakeProvider(response=(
+        '{"chart_type":"scatter",'
+        '"x_ticks":[{"value":0,"frac":0.0},{"value":10,"frac":1.0}],'
+        '"y_ticks":[{"value":0,"frac":0.0},{"value":25,"frac":1.0}],'
+        '"series_colors":["#00ffff"],"notes":"clean"}'))
+    img = cv2.imread(SAMPLE)
+    sug = suggest_calibration(fake, img, plot_bbox=(90, 40, 590, 380))
+    assert sug.chart_type == "scatter" and len(sug.x_ticks) == 2
+    px = frac_to_pixel(sug.x_ticks[1], (90, 40, 590, 380))
+    assert abs(px - 590) < 1e-6, f"frac→pixel wrong: {px}"
+
+    # apply confirmed ticks to a canvas session
+    from PySide6.QtWidgets import QApplication  # noqa: F401 (app already exists)
+    from .ui.canvas import DigitizerCanvas
+    canvas = DigitizerCanvas()
+    canvas.load_bgr(img, ExtractionSession(image_path=SAMPLE))
+    confirmed = [("x", t.value, t) for t in sug.x_ticks] + \
+                [("y", t.value, t) for t in sug.y_ticks]
+    n = canvas.apply_calibration_ticks(confirmed, (90, 40, 590, 380))
+    assert n == 4 and canvas.session.calibration.is_ready(), "AI ticks not applied"
+
+    class M:
+        def __init__(s, p, c, t, sent):
+            s.page_label, s.category, s.match_text, s.sentence = p, c, t, sent
+    summary = summarize_mentions(FakeProvider(response="- p1: CPUE 4.2±0.8"),
+                                 [M(1, "mean±sd", "4.2 +/- 0.8", "…")])
+    assert "4.2" in summary
+    print(f"  ai layer OK — providers(claude={ClaudeCliProvider.available()}, "
+          f"codex={CodexCliProvider.available()}), 4 AI ticks applied")
+
+
+def check_special_charts():
+    """Phase-3 chart wrappers: pie fractions on a synthetic pie, and box/heatmap
+    wrappers return the right table shape (values checked in the engine's own suite)."""
+    import math
+    import cv2
+    import numpy as np
+    from .charts import extract_pie, extract_heatmap
+    from .export_xlsx import export_chart_result
+
+    img = np.full((300, 300, 3), 255, np.uint8)
+    cx, cy, r = 150, 150, 100
+
+    def wedge(a0, a1, color):
+        pts = [(cx, cy)]
+        for a in np.linspace(a0, a1, 60):
+            pts.append((int(cx + r * math.cos(math.radians(a))),
+                        int(cy - r * math.sin(math.radians(a)))))
+        cv2.fillPoly(img, [np.array(pts, np.int32)], color)
+
+    wedge(0, 180, (0, 0, 255)); wedge(180, 288, (0, 255, 0)); wedge(288, 360, (255, 0, 0))
+    pie = extract_pie(img, center=(cx, cy), radius=r)
+    assert pie.kind == "pie" and len(pie.rows) == 3, f"pie rows: {pie.rows}"
+    fracs = sorted(row[3] for row in pie.rows)
+    assert abs(fracs[-1] - 0.5) < 0.05, f"largest wedge ≈0.5, got {fracs[-1]}"
+
+    # heatmap wrapper shape on a simple vertical gradient grid + colorbar
+    hm = np.zeros((100, 120, 3), np.uint8)
+    for j in range(120):
+        hm[:, j] = (0, 0, int(255 * j / 119))
+    cbar = np.zeros((100, 10, 3), np.uint8)
+    for i in range(100):
+        cbar[i, :] = (0, 0, int(255 * (99 - i) / 99))
+    canvas = np.full((120, 160, 3), 255, np.uint8)
+    canvas[10:110, 10:130] = hm
+    canvas[10:110, 140:150] = cbar
+    res = extract_heatmap(canvas, (10, 10, 130, 110), (4, 4), (140, 10, 150, 110), (0, 1))
+    assert res.kind == "heatmap" and res.meta["grid_shape"] == (4, 4), res.meta
+
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "pie.xlsx")
+        export_chart_result(pie, out, "smoke")
+        assert os.path.getsize(out) > 0
+    print(f"  special charts OK — pie {len(pie.rows)} wedges, heatmap {res.meta['grid_shape']}")
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication([])
 
@@ -162,6 +246,8 @@ def main() -> int:
     check_project_roundtrip(win)
     win._dirty = False   # headless: avoid the modal unsaved-changes prompt in _digitize
     check_pdf_pipeline(win)
+    check_ai_layer()
+    check_special_charts()
 
     win._dirty = False   # and again before close
     print(f"SMOKE OK — engine {eng.engine_version}, {n} extracted points")

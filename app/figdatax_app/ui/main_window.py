@@ -167,6 +167,28 @@ class MainWindow(QMainWindow):
         a_del.triggered.connect(self.canvas.delete_selected_points)
         m_edit.addAction(a_del)
 
+        m_charts = self.menuBar().addMenu("图表 / Charts")
+        a_box = QAction("箱线图提取 / Box plot…", self)
+        a_box.triggered.connect(self._extract_box)
+        m_charts.addAction(a_box)
+        a_pie = QAction("饼图提取 / Pie chart…", self)
+        a_pie.triggered.connect(self._extract_pie)
+        m_charts.addAction(a_pie)
+        a_heat = QAction("热图提取 / Heatmap…", self)
+        a_heat.triggered.connect(self._extract_heatmap)
+        m_charts.addAction(a_heat)
+
+        m_ai = self.menuBar().addMenu("AI")
+        a_cfg = QAction("AI 设置… / AI Settings…", self)
+        a_cfg.triggered.connect(self._ai_settings)
+        m_ai.addAction(a_cfg)
+        a_analyze = QAction("AI 分析图形（辅助校准）/ Analyze figure", self)
+        a_analyze.triggered.connect(self._ai_analyze_figure)
+        m_ai.addAction(a_analyze)
+        a_sum = QAction("AI 汇总数据线索 / Summarize data mentions", self)
+        a_sum.triggered.connect(self._ai_summarize_mentions)
+        m_ai.addAction(a_sum)
+
     # ── recent files ──
     def _recent(self) -> list:
         return [p for p in self.settings.value("recentProjects", [], type=list)
@@ -354,6 +376,189 @@ class MainWindow(QMainWindow):
             for p in s.points:
                 self.canvas._add_point_item(p)
         self.canvas.points_changed.emit()
+
+    # ── special charts (box / pie / heatmap) ──
+    def _need_image(self) -> bool:
+        if self.canvas.image_bgr is None:
+            QMessageBox.information(self, "Charts", "先打开一张图 / open a figure first.")
+            return False
+        return True
+
+    def _show_chart_result(self, result, source: str):
+        from ..export_xlsx import export_chart_result
+        from .chart_dialogs import ChartResultDialog
+        dlg = ChartResultDialog(result, self)
+        if dlg.exec():
+            path, _ = QFileDialog.getSaveFileName(self, "Export chart result", "",
+                                                  "Excel (*.xlsx)")
+            if path:
+                export_chart_result(result, path, source)
+                self.statusBar().showMessage(f"Exported {path}")
+
+    def _extract_box(self):
+        if not self._need_image():
+            return
+        if not self.canvas.session.calibration.is_ready():
+            QMessageBox.information(self, "Box plot",
+                                    "需要 Y 轴校准 / calibrate the Y axis first.")
+            return
+        from ..charts import extract_box
+        from ..pipeline import build_calibration
+        from .chart_dialogs import BoxParamsDialog
+        dlg = BoxParamsDialog(default_hsv=self.canvas.target_hsv, parent=self)
+        if not dlg.exec():
+            return
+        try:
+            box_hsv, median_hsv = dlg.values()
+            if box_hsv is None:
+                box_hsv = self.canvas.target_hsv
+            if box_hsv is None:
+                raise ValueError("Provide a box color (or pick one with the eyedropper).")
+            cal = build_calibration(self.canvas.session.calibration)
+            result = extract_box(self.canvas.image_bgr, self.canvas.session.plot_bbox,
+                                 cal, box_hsv, median_hsv)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Box plot", str(exc))
+            return
+        self._show_chart_result(result, self._chart_source())
+
+    def _extract_pie(self):
+        if not self._need_image():
+            return
+        from ..charts import extract_pie
+        from .chart_dialogs import PieParamsDialog
+        dlg = PieParamsDialog(self)
+        if not dlg.exec():
+            return
+        try:
+            center, radius = dlg.values()
+            result = extract_pie(self.canvas.image_bgr, center=center, radius=radius)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Pie chart", str(exc))
+            return
+        self._show_chart_result(result, self._chart_source())
+
+    def _extract_heatmap(self):
+        if not self._need_image():
+            return
+        from ..charts import extract_heatmap
+        from .chart_dialogs import HeatmapParamsDialog
+        dlg = HeatmapParamsDialog(plot_bbox=self.canvas.session.plot_bbox, parent=self)
+        if not dlg.exec():
+            return
+        try:
+            bbox, grid, cbar, crange = dlg.values()
+            result = extract_heatmap(self.canvas.image_bgr, bbox, grid, cbar, crange)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Heatmap", str(exc))
+            return
+        self._show_chart_result(result, self._chart_source())
+
+    def _chart_source(self) -> str:
+        return (self.canvas.session.source_label or self.canvas.session.image_path
+                or self.project_path or "")
+
+    # ── AI assists ──
+    def _ai_settings(self):
+        from .ai_dialog import AISettingsDialog
+        AISettingsDialog(self.settings, self).exec()
+
+    def _ai_provider(self):
+        from ..ai import config as aicfg
+        cfg = aicfg.load_config(self.settings)
+        if not aicfg.provider_available(cfg):
+            QMessageBox.warning(
+                self, "AI", "所选 AI 提供方不可用（CLI 未安装或未登录）。\n"
+                            "Selected AI provider is unavailable — check AI Settings.")
+            return None
+        return aicfg.build_provider(cfg)
+
+    def _ai_analyze_figure(self):
+        if self.canvas.image_bgr is None:
+            QMessageBox.information(self, "AI", "先打开一张图 / open a figure first.")
+            return
+        provider = self._ai_provider()
+        if provider is None:
+            return
+        from ..ai.assist import suggest_calibration
+        from .ai_dialog import CalibrationReviewDialog
+        bbox = self.canvas.session.plot_bbox
+        self.statusBar().showMessage("AI 分析图形中… / analyzing figure…")
+
+        def work():
+            return suggest_calibration(provider, self.canvas.image_bgr, bbox)
+
+        def done(sug):
+            self.statusBar().clearMessage()
+            if sug is None:
+                return
+            if sug.is_empty():
+                QMessageBox.information(self, "AI",
+                                       "AI 未能读出刻度 / no ticks read. " + (sug.notes or ""))
+                return
+            if not bbox:
+                QMessageBox.information(
+                    self, "AI", "需要先确定绘图区（自动或手动）以映射刻度位置。\n"
+                                "A plot area is required to place ticks.")
+                return
+            dlg = CalibrationReviewDialog(sug, bbox, self)
+            if dlg.exec():
+                n = self.canvas.apply_calibration_ticks(dlg.confirmed(), bbox)
+                self.statusBar().showMessage(f"应用了 {n} 个 AI 校准点 / applied {n} ticks")
+
+        self._run_async(work, done, "AI figure analysis")
+
+    def _ai_summarize_mentions(self):
+        mentions = getattr(self.pdf_view, "mentions", [])
+        if not mentions:
+            QMessageBox.information(self, "AI", "先打开并分析一个 PDF / analyze a PDF first.")
+            return
+        provider = self._ai_provider()
+        if provider is None:
+            return
+        from ..ai.assist import summarize_mentions
+        self.statusBar().showMessage("AI 汇总中… / summarizing…")
+
+        def work():
+            return summarize_mentions(provider, mentions)
+
+        def done(text):
+            self.statusBar().clearMessage()
+            if text is not None:
+                dlg = QMessageBox(self)
+                dlg.setWindowTitle("AI 数据线索汇总 / Data-mention summary")
+                dlg.setText(text)
+                dlg.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                dlg.exec()
+
+        self._run_async(work, done, "AI summary")
+
+    def _run_async(self, work, done, label: str):
+        """Run ``work()`` in a thread; call ``done(result)`` on the UI thread. On error,
+        show a message and call ``done(None)``."""
+        from PySide6.QtCore import QThread, Signal
+
+        class _W(QThread):
+            ok = Signal(object)
+            err = Signal(str)
+
+            def run(self):
+                try:
+                    self.ok.emit(work())
+                except Exception as exc:  # noqa: BLE001
+                    self.err.emit(str(exc))
+
+        w = _W(self)
+        self._ai_worker = w   # keep a reference
+
+        def on_err(msg):
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, "AI", f"{label} failed:\n{msg}")
+            done(None)
+
+        w.ok.connect(done)
+        w.err.connect(on_err)
+        w.start()
 
     def _export(self):
         if not self.canvas.session.total_points():

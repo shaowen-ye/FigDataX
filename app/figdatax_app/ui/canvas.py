@@ -241,6 +241,32 @@ class DigitizerCanvas(QGraphicsView):
                 pass
         self.points_changed.emit()
 
+    def apply_calibration_ticks(self, confirmed, plot_bbox):
+        """Add user-confirmed AI tick suggestions as calibration points.
+
+        ``confirmed`` is a list of ``(axis, value, TickSuggestion)`` from the review
+        dialog; ``plot_bbox`` maps each fractional position to a pixel coordinate.
+        """
+        from ..ai.assist import frac_to_pixel
+        added = 0
+        for axis, value, sug in confirmed:
+            px_coord = frac_to_pixel(sug, plot_bbox)
+            if axis == "x":
+                cp = CalibPoint(px_coord, value, scene_x=px_coord,
+                                scene_y=plot_bbox[3])
+                self.session.calibration.x_points.append(cp)
+                self._add_calib_item(cp, "x")
+            else:
+                cp = CalibPoint(px_coord, value, scene_x=plot_bbox[0],
+                                scene_y=px_coord)
+                self.session.calibration.y_points.append(cp)
+                self._add_calib_item(cp, "y")
+            added += 1
+        if added:
+            self.calibration_changed.emit()
+            self._recompute_data_coords()
+        return added
+
     def _recompute_data_coords(self):
         """After calibration edits, refresh every point's data coordinates."""
         if not self.session.calibration.is_ready():
