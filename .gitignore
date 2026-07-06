@@ -1,11 +1,31 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.DS_Store
 *.egg-info/
-dist/
-build/
 .eggs/
-*.csv
-*.png
-!README.md
+.pytest_cache/
+
+# Virtual environments (skill + app)
+.venv/
+app/.venv/
+app/.venv-build/
+
+# Build / distribution artifacts
+build/
+dist/
+app/build/
+app/dist/
+*.app
+*.dmg
+
+# macOS
+.DS_Store
+
+# FigDataX extraction outputs (produced next to input images).
+# Scoped to our naming convention so example/test fixtures are NOT ignored.
+*_extracted.csv
+*_extracted.xlsx
+*_validation.png
+*_grid.png
+tests/_artifacts/

@@ -1,0 +1,4 @@
+# FigDataX development / test dependencies.
+# Install alongside runtime deps with:  bash scripts/setup.sh --dev
+-r requirements.txt
+pytest>=8
