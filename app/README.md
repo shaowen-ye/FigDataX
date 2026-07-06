@@ -5,13 +5,13 @@ charts interactively, and (in upcoming phases) load PDFs to detect data-bearing 
 and tables, extract them, export to Excel, and surface important data mentions with their
 location in the document.
 
-> **Status: `0.1.0` — Phase 1 + Phase 2 implemented.** The interactive digitize path
-> (open image → calibrate → pick color → extract → export Excel) works end-to-end, with
-> **project save/load** (`.fdx`) and **manual point editing**. The **PDF pipeline** loads
-> a document, detects embedded figures (send any to the digitizer), extracts tables
-> (pdfplumber), scans the text for **data mentions** with jump-to-page, and exports a
-> multi-sheet workbook. The AI-assist layer and `.dmg` packaging are the remaining phases
-> (see [../CHANGELOG.md](../CHANGELOG.md) and [../PROJECT.md](../PROJECT.md)).
+> **Status: `0.2.0` — feature-complete.** Interactive digitizing (open image → calibrate →
+> pick color → extract → export Excel) with **project save/load** (`.fdx`) and **manual
+> point editing**; the **PDF pipeline** (figure/table detection, data-mention scanner with
+> jump-to-page, multi-sheet workbook export); **box/pie/heatmap** extraction; and an
+> optional **AI-assist layer** (subscription CLIs or OpenAI-compatible APIs). Unsigned
+> `.dmg` packaging and GitHub Actions CI are in place. See
+> [../CHANGELOG.md](../CHANGELOG.md).
 
 ## Run from source
 
@@ -48,6 +48,39 @@ The status bar shows a live **pixel → data** readout once calibration is set.
    correlations, CI, Table/Figure refs) with its sentence; click to jump to its page.
 5. **导出整篇文档 / Export Document** (`Ctrl+Shift+E`) — one workbook with the digitized
    figure(s), every extracted table, and the full data-mentions list.
+
+## Box / pie / heatmap (Charts menu)
+
+For non-XY charts, use **图表 / Charts**:
+
+- **箱线图 / Box plot** — calibrate the Y axis, pick the box fill color, get a
+  five-number summary (whiskers, Q1, median, Q3) per box.
+- **饼图 / Pie chart** — wedge fractions and percentages by angular color segmentation
+  (auto-detects the disc, or give center/radius).
+- **热图 / Heatmap** — a numeric matrix via colorbar calibration (give grid shape,
+  colorbar box, and its value range).
+
+Each result opens in a table you can export to Excel.
+
+## AI assist (optional)
+
+**AI → AI 设置 / Settings** to choose a provider — everything is optional and the app is
+fully usable without it:
+
+- **Claude 订阅 CLI** — your Claude Max/Pro subscription via the local `claude` CLI.
+- **ChatGPT 订阅 CLI** — ChatGPT Plus via the local `codex` CLI.
+- **OpenAI 兼容 API** — any `/chat/completions` endpoint (DeepSeek, Qwen, Ollama, …);
+  the key is stored in the macOS Keychain.
+
+Then:
+
+- **AI 分析图形 / Analyze figure** reads the chart type and axis ticks and proposes
+  calibration points — **you confirm each value** in a review dialog before it is applied.
+- **AI 汇总数据线索 / Summarize data mentions** turns the flagged PDF numbers into a
+  concise, page-cited summary.
+
+AI output is always suggestive; the extraction engine itself stays fully deterministic.
+See [AI_INTEGRATION.md](AI_INTEGRATION.md).
 
 ## Build a distributable app (unsigned)
 

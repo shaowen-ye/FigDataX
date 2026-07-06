@@ -23,7 +23,7 @@ command -v uv >/dev/null 2>&1 && UV="$(command -v uv)"
 [ -z "$UV" ] && [ -x "$HOME/.local/bin/uv" ] && UV="$HOME/.local/bin/uv"
 BVENV=".venv-build"
 if [ -n "$UV" ]; then
-    [ -d "$BVENV" ] || "$UV" venv "$BVENV"
+    [ -d "$BVENV" ] || "$UV" venv "$BVENV" --python 3.12
     "$UV" pip install --python "$BVENV/bin/python" -r requirements.txt py2app
 else
     [ -d "$BVENV" ] || python3 -m venv "$BVENV"

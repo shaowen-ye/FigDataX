@@ -3,7 +3,17 @@
 Build the unsigned .app with:  bash app/build.sh
 """
 
+import os
+import sys
+
 from setuptools import setup
+
+# The extraction engine (``scripts/figdatax``) lives at the repo root, one level up from
+# this app/ directory. Put it on sys.path so py2app's modulegraph can find and bundle it;
+# inside the frozen app it then imports as a normal top-level ``scripts`` package.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 APP = ["figdatax_app/__main__.py"]
 DATA_FILES = [
