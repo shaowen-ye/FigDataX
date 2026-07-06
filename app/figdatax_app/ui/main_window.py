@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (QDockWidget, QFileDialog, QLabel, QListWidget,
 
 from .. import __app_version__
 from .. import engine_bridge as eng
-from ..export_xlsx import export_session
+from ..export_xlsx import export_session, export_workbook
+from ..pdf_document import pdf_available
 from ..project import SUFFIX, ProjectError, load_project, save_project
 from .canvas import DigitizerCanvas, Mode
+from .pdf_view import PdfView
 
 MAX_RECENT = 8
 
@@ -85,9 +87,9 @@ class MainWindow(QMainWindow):
     def _build_center(self):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.canvas, "提取工作台 / Workspace")
-        pdf_placeholder = QLabel("PDF 文档视图 — 后续阶段\n(PDF view — coming soon)")
-        pdf_placeholder.setAlignment(Qt.AlignCenter)
-        self.tabs.addTab(pdf_placeholder, "文档 / Document")
+        self.pdf_view = PdfView()
+        self.pdf_view.send_figure_to_canvas.connect(self._digitize_pdf_figure)
+        self.tabs.addTab(self.pdf_view, "文档 / Document")
         self.setCentralWidget(self.tabs)
 
     def _build_sidebar(self):
@@ -155,6 +157,7 @@ class MainWindow(QMainWindow):
         act("项目另存为… / Save As…", self._save_project_as, "Ctrl+Shift+S")
         m_file.addSeparator()
         act("导出 Excel… / Export Excel…", self._export, "Ctrl+E")
+        act("导出整篇文档… / Export Document…", self._export_document, "Ctrl+Shift+E")
         m_file.addSeparator()
         act("退出 / Quit", self.close, "Ctrl+Q")
         self._rebuild_recent_menu()
@@ -271,10 +274,51 @@ class MainWindow(QMainWindow):
             self._clear_dirty()
 
     def _open_pdf(self):
-        QMessageBox.information(
-            self, "Coming soon",
-            "PDF ingestion (figure/table detection, data-mention location, Excel export) "
-            "is planned for the next phase. For now, open a figure image.")
+        if not pdf_available():
+            QMessageBox.critical(
+                self, "PDF",
+                "PDF support needs pypdfium2 + pdfplumber. Reinstall the app venv "
+                "(bash app/run_dev.sh) — they are in app/requirements.txt.")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF (*.pdf)")
+        if not path:
+            return
+        self.tabs.setCurrentWidget(self.pdf_view)
+        self.pdf_view.open_pdf(path)
+
+    def _digitize_pdf_figure(self, bgr, label: str):
+        """A figure detected in the PDF was sent to the digitizer canvas."""
+        if not self._maybe_save():
+            return
+        from ..models import ExtractionSession
+        session = ExtractionSession(source_label=label)
+        self.canvas.load_bgr(bgr, session)
+        try:
+            self.canvas.session.plot_bbox = eng.auto_detect_plot_area(bgr)
+        except Exception:
+            self.canvas.session.plot_bbox = None
+        self.project_path = None
+        self.tabs.setCurrentWidget(self.canvas)
+        self._refresh_results()
+        self._clear_dirty()
+        self.statusBar().showMessage(f"Loaded figure from {label} — calibrate to begin.")
+
+    def _export_document(self):
+        """Export everything found in the current PDF (tables + data mentions) plus the
+        current digitized figure, to a multi-sheet workbook."""
+        pv = self.pdf_view
+        if not (pv.tables or pv.mentions or self.canvas.session.total_points()):
+            QMessageBox.information(self, "Export", "Open and analyze a PDF first, or extract a figure.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export document workbook", "",
+                                              "Excel (*.xlsx)")
+        if not path:
+            return
+        sessions = [self.canvas.session] if self.canvas.session.total_points() else []
+        src = pv.doc.path if pv.doc else (self.canvas.session.image_path or "")
+        export_workbook(path, sessions=sessions, tables=pv.tables,
+                        mentions=pv.mentions, source_name=src)
+        self.statusBar().showMessage(f"Exported document workbook {path}")
 
     def _extract(self):
         try:

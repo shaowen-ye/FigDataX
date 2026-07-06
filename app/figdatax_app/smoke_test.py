@@ -16,13 +16,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from . import engine_bridge as eng  # noqa: E402
+from .data_mentions import rank, scan_pages  # noqa: E402
 from .models import CalibPoint, ExtractionSession  # noqa: E402
+from .pdf_document import PdfDocument, pdf_available  # noqa: E402
 from .pipeline import extract_series  # noqa: E402
-from .export_xlsx import export_session  # noqa: E402
+from .export_xlsx import export_session, export_workbook  # noqa: E402
 from .project import load_project, save_project  # noqa: E402
 from .ui.main_window import MainWindow  # noqa: E402
 
-SAMPLE = os.path.join(os.path.dirname(__file__), "assets", "sample", "sample_scatter.png")
+ASSETS = os.path.join(os.path.dirname(__file__), "assets", "sample")
+SAMPLE = os.path.join(ASSETS, "sample_scatter.png")
+SAMPLE_PDF = os.path.join(ASSETS, "sample_paper.pdf")
 
 CAL_X = [CalibPoint(90, 0, scene_x=90, scene_y=380),
          CalibPoint(590, 10, scene_x=590, scene_y=380)]
@@ -106,6 +110,46 @@ def check_project_roundtrip(win: MainWindow):
     print(f"  project round-trip OK — {n_before} points, image {shape_before[1]}x{shape_before[0]}")
 
 
+def check_pdf_pipeline(win: MainWindow):
+    """Phase 2: figure detection → digitize crop, table extraction, data mentions,
+    and multi-sheet workbook export."""
+    if not pdf_available():
+        print("  pdf pipeline SKIPPED (pypdfium2/pdfplumber missing)")
+        return
+    doc = PdfDocument(SAMPLE_PDF)
+    assert doc.n_pages == 1
+
+    figs = doc.detect_figures(0)
+    assert figs, "no embedded figure detected in sample PDF"
+    crop = doc.crop_figure(figs[0])
+    assert crop.ndim == 3 and crop.shape[0] > 80 and crop.shape[1] > 80
+
+    tables = doc.detect_tables(0)
+    assert tables and tables[0].shape == (4, 4), f"expected a 4×4 table, got {tables}"
+    assert tables[0].rows[0][0].lower() == "site"
+
+    mentions = rank(scan_pages(doc.all_text()))
+    cats = {m.category for m in mentions}
+    for needed in ("mean±sd", "n=", "p-value", "table-ref", "figure-ref"):
+        assert needed in cats, f"data-mention scanner missed {needed}: {cats}"
+    meansd = next(m for m in mentions if m.category == "mean±sd")
+    assert meansd.match_text == "4.2 +/- 0.8", f"bad mean±sd span: {meansd.match_text!r}"
+
+    # feed the detected figure into the canvas (as the GUI would)
+    win._digitize_pdf_figure(crop, "sample_paper.pdf p1 figure 1")
+    assert win.canvas.image_bgr is not None
+    assert win.canvas.session.source_label.startswith("sample_paper.pdf")
+
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "doc.xlsx")
+        export_workbook(out, sessions=[], tables=tables, mentions=mentions,
+                        source_name=SAMPLE_PDF)
+        assert os.path.getsize(out) > 0
+    doc.close()
+    print(f"  pdf pipeline OK — 1 figure, table {tables[0].shape}, "
+          f"{len(mentions)} mentions")
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication([])
 
@@ -116,8 +160,10 @@ def main() -> int:
     n = check_pipeline()
     check_point_editing(win)
     check_project_roundtrip(win)
+    win._dirty = False   # headless: avoid the modal unsaved-changes prompt in _digitize
+    check_pdf_pipeline(win)
 
-    win._dirty = False  # avoid the unsaved-changes prompt in headless close
+    win._dirty = False   # and again before close
     print(f"SMOKE OK — engine {eng.engine_version}, {n} extracted points")
     app.quit()
     return 0
