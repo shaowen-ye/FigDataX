@@ -46,7 +46,9 @@ $PY -m scripts.figdatax extract figure.png \
 - [references/](references/) — precision & troubleshooting, morphological pipeline,
   special cases, full CLI reference.
 - [CHANGELOG.md](CHANGELOG.md) — release notes.
-- [app/README.md](app/README.md) — the desktop app (in development).
+- [app/README.md](app/README.md) — the **FigDataX Desktop** GUI: interactive digitizer,
+  PDF figure/table/data-mention pipeline, box/pie/heatmap extraction, and an optional
+  AI-assist layer.
 
 ## License
 

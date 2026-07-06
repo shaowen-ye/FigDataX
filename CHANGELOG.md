@@ -54,6 +54,31 @@ gracefully when optional dependencies are absent.
 
 ## App
 
+### app-v0.2.0 — 2026-07-06
+
+Completes the roadmap: the AI-assist layer, box/pie/heatmap extraction, and CI/packaging.
+
+**Added**
+- **AI-assist layer** (`figdatax_app/ai/`): pluggable providers — Claude Max/Pro via the
+  `claude` CLI, ChatGPT Plus via the `codex` CLI, and any OpenAI-compatible API
+  (DeepSeek, Qwen, Ollama, …). API keys are stored in the macOS Keychain.
+  - **Analyze figure**: a vision model proposes chart type, axis-tick values, and series
+    colors; the user confirms each tick in a review dialog before it becomes a calibration
+    point. AI never sets a value unconfirmed; the engine stays deterministic.
+  - **Summarize data mentions**: turns the flagged PDF numbers into a page-cited summary.
+  - AI Settings dialog (provider/model/key + connection test); CLI calls run off the UI
+    thread.
+- **Box / pie / heatmap extraction** (Charts menu): five-number box summaries, pie wedge
+  fractions, and colorbar-calibrated heatmap matrices, each viewable and Excel-exportable.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): macOS runner runs the skill pytest
+  suite and the app smoke test on every push/PR; tagged `app-v*` builds attach the
+  unsigned `.dmg`/`.app.zip` to the release.
+
+**Fixed**
+- py2app bundling of the engine package (`scripts/figdatax`) — repo root added to the
+  build path so `No module named scripts` no longer aborts the build. Build venv pinned
+  to Python 3.12.
+
 ### app-v0.1.0 — 2026-07-06
 
 First functional release of **FigDataX Desktop** (PySide6), covering the Phase 1 MVP and
