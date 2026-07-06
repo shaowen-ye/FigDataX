@@ -1,0 +1,1 @@
+"""FigDataX Desktop UI widgets."""
