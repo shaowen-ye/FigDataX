@@ -54,5 +54,38 @@ gracefully when optional dependencies are absent.
 
 ## App
 
-_No releases yet. The `app/` desktop GUI (PySide6) is under development; see
-[app/README.md](app/README.md)._
+### app-v0.1.0 — 2026-07-06
+
+First functional release of **FigDataX Desktop** (PySide6), covering the Phase 1 MVP and
+the Phase 2 document-intelligence pipeline. Runs from source (`bash app/run_dev.sh`);
+`.dmg` packaging and the AI-assist layer are the next phases.
+
+**Phase 1 — interactive digitizer + project management**
+- QGraphicsView canvas (scene units = image pixels): zoom/pan, click-to-calibrate with
+  value entry, eyedropper via the engine's `pick_color`, color extraction overlay, and a
+  live pixel→data readout.
+- Manual point editing: Add-point and Edit modes — click to add, drag markers (model and
+  data coordinates update live), rubber-band select, Delete key / table button to remove;
+  the results table stays in sync both ways.
+- `.fdx` project files: versioned JSON with an embedded PNG copy of the source image, so
+  projects reopen even if the original moved. New/Open/Save/Save As, recent projects
+  (QSettings), dirty tracking with an unsaved-changes prompt.
+- Excel export: summary sheet + one sheet per series.
+
+**Phase 2 — PDF document intelligence**
+- PDF loading and rendering via pypdfium2 (Apache/BSD — deliberately not AGPL PyMuPDF).
+- Embedded-figure detection with a PDF→page-pixel coordinate flip; send any figure's
+  native-resolution crop straight to the digitizer.
+- Table extraction (pdfplumber) with in-app preview.
+- Data-mention scanner: flags mean±SD, `n=`, p-values, correlations, %, ranges, CI,
+  units, and Table/Figure references, each with its page and sentence; click to jump to
+  the page. Sentence splitting preserves decimals so numbers aren't severed.
+- Multi-sheet workbook export (`Export Document`): digitized figures + all tables + the
+  data-mentions list.
+- Headless smoke test (`run_dev.sh --smoke`) covers extraction accuracy, point-edit sync,
+  `.fdx` round-trip, and the full PDF pipeline against a committed synthetic-paper fixture.
+
+**Design (not yet implemented)**
+- AI-assist layer — Claude Max (`claude` CLI), ChatGPT Plus (`codex` CLI), and
+  OpenAI-compatible APIs (DeepSeek, …) for AI-assisted calibration and figure
+  classification; see [app/AI_INTEGRATION.md](app/AI_INTEGRATION.md).
