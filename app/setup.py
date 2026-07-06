@@ -15,7 +15,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-APP = ["figdatax_app/__main__.py"]
+APP = ["main_app.py"]   # absolute-import entry; py2app runs it without package context
 DATA_FILES = [
     ("assets/sample", ["figdatax_app/assets/sample/sample_scatter.png"]),
 ]
