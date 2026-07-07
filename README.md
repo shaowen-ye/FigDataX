@@ -41,6 +41,22 @@ verify the annotated overlay → pair tick values by vision → calibrate (hard 
 gate) → extract sub-pixel centroids → visually check the validation overlay → iterate
 up to 3 rounds → deliver CSV/Excel + a provenance report.
 
+### Zero-typing entry points (macOS)
+
+```bash
+bash ~/.claude/skills/FigDataX/integrations/macos/install.sh
+```
+
+installs two shortcuts so you barely type at all:
+
+- **`/figx` slash command** — in Claude Code, type `/figx` and drag the image(s) into
+  the terminal. Full interactivity (Claude can still ask at the two gates).
+- **Finder Quick Action** — select images in Finder → right-click → 快捷操作 →
+  **FigDataX 提取数据**. Runs headless (`claude -p`, billed to your subscription),
+  drops CSV/validation/Excel next to the images, then notifies you. In headless mode
+  Claude cannot ask questions: at the gates it proceeds with best judgment and flags
+  the uncertainty in the report. Model override: `FIGX_MODEL=claude-opus-4-8`.
+
 Or use the CLI directly (see [references/cli.md](references/cli.md)):
 
 ```bash
