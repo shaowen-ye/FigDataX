@@ -53,6 +53,11 @@ def run_self_test() -> int:
             print(f"  dep {name:11s} OK {getattr(mod, '__version__', '')}")
         except Exception:  # noqa: BLE001
             print(f"  dep {name:11s} MISSING")
+    try:
+        mod = __import__("pypdfium2")
+        print(f"  dep pypdfium2   OK {getattr(mod, '__version__', '')} (optional, PDF figures)")
+    except Exception:  # noqa: BLE001
+        print("  dep pypdfium2   MISSING (optional — needed only to pull figures from PDFs)")
 
     W, H = 600, 400
     img = np.full((H, W, 3), 255, np.uint8)
@@ -172,6 +177,45 @@ def _cmd_colors(args):
         print(f"  {name:8s} HSV {hsv}")
 
 
+def _cmd_pdf_figures(args):
+    from .pdf import scan_figures
+    out_dir = args.out_dir or os.path.splitext(args.pdf)[0] + "_figures"
+    man = scan_figures(args.pdf, out_dir, scale=args.scale, crop_scale=args.crop_scale)
+
+    print(f"Scanned {man['source_pdf']}")
+    print(f"Manifest: {os.path.join(out_dir, 'manifest.json')}\n")
+    print(f"Figures ({man['n_figures']} bitmap):")
+    for f in man["figures"]:
+        label = f" [{f['label']}]" if f.get("label") else ""
+        print(f"  {f['id']}{label} p.{f['page']}  {f['png']}")
+    for u in man["vector_pages"]:
+        print(f"  (vector?) p.{u['page']} [{u['label']}] → view {u['page_png']} and crop")
+    if not man["figures"] and not man["vector_pages"]:
+        print("  (none found)")
+
+
+def _cmd_pdf_page(args):
+    from .pdf import PdfDocument
+    import cv2
+    out = args.output or f"{os.path.splitext(args.pdf)[0]}_page{args.page}.png"
+    with PdfDocument(args.pdf) as doc:
+        if not 1 <= args.page <= doc.n_pages:
+            raise FigDataXError(f"--page {args.page} out of range 1..{doc.n_pages}")
+        bgr = doc.render_page(args.page - 1, scale=args.scale)
+    cv2.imwrite(out, bgr)
+    print(f"page {args.page} rendered: {out}  {bgr.shape[1]}x{bgr.shape[0]}")
+
+
+def _cmd_xlsx(args):
+    import json as _json
+    from .export import export_figures
+    with open(args.spec, "r", encoding="utf-8") as fh:
+        spec = _json.load(fh)
+    out = export_figures(spec["out"], figures=spec.get("figures", []),
+                         source_name=spec.get("source", ""))
+    print(f"workbook saved: {out}")
+
+
 # ───────────────────────────────────────────────────────────────────
 #  Parser
 # ───────────────────────────────────────────────────────────────────
@@ -222,6 +266,27 @@ def build_parser():
     co.add_argument("--at", type=int, nargs=2, metavar=("X", "Y"))
     co.add_argument("--n", type=int, default=4)
     co.set_defaults(func=_cmd_colors)
+
+    ps = sub.add_parser("pdf-figures",
+                        help="crop every figure in a PDF to PNG + write manifest.json")
+    ps.add_argument("pdf")
+    ps.add_argument("--out-dir", help="default: <pdf-stem>_figures next to the PDF")
+    ps.add_argument("--scale", type=float, default=2.0, help="page render zoom")
+    ps.add_argument("--crop-scale", type=float, default=4.0, help="figure crop zoom")
+    ps.set_defaults(func=_cmd_pdf_figures)
+
+    pp = sub.add_parser("pdf-page", help="render one PDF page to PNG (1-based --page)")
+    pp.add_argument("pdf")
+    pp.add_argument("--page", type=int, required=True)
+    pp.add_argument("--scale", type=float, default=3.0)
+    pp.add_argument("--output")
+    pp.set_defaults(func=_cmd_pdf_page)
+
+    wk = sub.add_parser("xlsx",
+                        help="gather extracted figure CSVs into one Excel workbook")
+    wk.add_argument("spec", help='JSON: {"out", "source", "figures": '
+                                 '[{"name","csv","provenance"}]}')
+    wk.set_defaults(func=_cmd_xlsx)
 
     st = sub.add_parser("self-test", help="run a fast synthetic extraction self-check")
     st.set_defaults(func=lambda a: sys.exit(run_self_test()))

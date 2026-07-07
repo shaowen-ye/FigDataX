@@ -13,7 +13,12 @@ Public API (import via ``from scripts.figdatax import ...``):
                 assign_series_with_crossover
   Chart types   extract_boxplot, extract_pie, extract_heatmap
   Validation    create_validation_plot, render_validation
+  PDF figures   PdfDocument, FigureRef, pdf_available, scan_figures
+  Export        export_figures
   Errors        FigDataXError, InputError, CalibrationError, DetectionError
+
+PDF figure ingestion needs the optional pypdfium2 package (lazy-loaded);
+everything else runs with cv2+numpy(+pandas), matplotlib/scipy also lazy.
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ from .morph import (detect_markers_morphological, cluster_markers_by_x,
                     assign_series_with_crossover)
 from .charts import extract_boxplot, extract_pie, extract_heatmap
 from .validate import create_validation_plot, render_validation
+from .pdf import PdfDocument, FigureRef, PageText, pdf_available, scan_figures
+from .export import export_figures
 
 __all__ = [
     "__version__",
@@ -47,4 +54,6 @@ __all__ = [
     "assign_series_with_crossover",
     "extract_boxplot", "extract_pie", "extract_heatmap",
     "create_validation_plot", "render_validation",
+    "PdfDocument", "FigureRef", "PageText", "pdf_available", "scan_figures",
+    "export_figures",
 ]
