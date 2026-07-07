@@ -64,3 +64,16 @@ ultra-fine grids — they obscure the image without meaningful precision gain.
 
 If a heavy dependency is missing the function raises a `FigDataXError` telling you to run
 `bash scripts/setup.sh`; the rest of the library keeps working.
+
+## Tick auto-detection (`detect_ticks`) failure modes
+
+| Result | Meaning | What to do |
+|--------|---------|-----------|
+| axis is `null` | The chart has no tick marks (spine + gridlines only), or ticks are shorter than 1px / longer than `search_px`. | Fall back to the grid overlay: `overlay` command → Read it → locate tick pixel positions visually. |
+| `spacing_cv > 0.15` | Detected positions are unevenly spaced — probably glyph noise or mixed major/minor strokes. | Treat positions as suspect; verify each against the annotated PNG, or fall back to the grid overlay. |
+| fewer positions than printed labels | Edge ticks may coincide with the plot corners, or a label exists without a tick mark. | Pair only the ticks you can match confidently; 3+ per axis is enough. |
+| more positions than printed labels | Unlabeled minor ticks survived (same length as majors). | Keep only positions whose spacing matches the labeled ticks; drop the rest. |
+
+`detect_ticks` is best-effort by contract: precise where real tick marks exist
+(±1px on rendered charts), and silent (`null`) where they do not — it never guesses.
+The grid overlay is always the fallback path.

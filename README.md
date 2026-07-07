@@ -1,15 +1,21 @@
 # FigDataX
 
-**Fig**ure **Data** e**X**traction — high-precision scientific figure data extraction.
+**Fig**ure **Data** e**X**traction — high-precision scientific figure data extraction,
+as an agentic **Claude Code skill**.
 
-Extract numerical data from paper figures (bar, line, scatter, box, heatmap, pie, polar,
-stacked charts) with up to **±0.5% accuracy**, via multi-point axis calibration + color
-detection. Ships as both a **Claude Code skill** and a **desktop app** — see
-[PROJECT.md](PROJECT.md) for how the two fit together.
+Give Claude a figure image (or several) cropped from a paper; it extracts the numbers
+at up to **±0.5% accuracy** and proves it with a validation overlay. The engine measures
+the geometry (plot area, tick pixel positions, series colors, sub-pixel centroids);
+Claude reads the semantics (tick values, legend) with vision; you are asked only when
+something is genuinely ambiguous.
+
+Supported: scatter, line, bar (grouped/stacked), box, pie, heatmap, polar, error bars,
+log axes, multi-panel figures. Output: CSV per figure + optional multi-sheet Excel with
+provenance (method, calibration RMSE, validation rounds).
 
 中文说明见 [中文说明.md](中文说明.md)。
 
-## Install (skill)
+## Install
 
 ```bash
 git clone https://github.com/Shaowen-Ye/FigDataX ~/.claude/skills/FigDataX
@@ -26,29 +32,36 @@ In Claude Code, just ask:
 ```
 > 提取 /path/to/figure.png 图片数据
 > Extract data from ./results/fig3.png
+> 这几张图都提取一下，汇总成一个 Excel
 ```
 
-Claude follows the workflow in [SKILL.md](SKILL.md): view the figure, detect the plot
-area, multi-point-calibrate the axes, extract marker centers (sub-pixel), and save the
-data + a validation overlay next to the input image.
+Claude runs the autonomous loop in [SKILL.md](SKILL.md): classify the chart → engine
+geometry pass (`figdatax geometry`: bbox + tick positions + series colors) → visually
+verify the annotated overlay → pair tick values by vision → calibrate (hard RMSE < 1%
+gate) → extract sub-pixel centroids → visually check the validation overlay → iterate
+up to 3 rounds → deliver CSV/Excel + a provenance report.
 
 Or use the CLI directly (see [references/cli.md](references/cli.md)):
 
 ```bash
 PY="$HOME/.claude/skills/FigDataX/.venv/bin/python"
+$PY -m scripts.figdatax geometry figure.png --json geom.json --annotate geom.png
 $PY -m scripts.figdatax extract figure.png \
     --calibration-points calib.json --color-target 0 255 255 --subpixel --validate
 ```
 
 ## Documentation
 
-- [SKILL.md](SKILL.md) — the extraction workflow and API (the single source of truth).
+- [SKILL.md](SKILL.md) — the autonomous extraction loop (the single source of truth).
 - [references/](references/) — precision & troubleshooting, morphological pipeline,
   special cases, full CLI reference.
 - [CHANGELOG.md](CHANGELOG.md) — release notes.
-- [app/README.md](app/README.md) — the **FigDataX Desktop** GUI: interactive digitizer,
-  PDF figure/table/data-mention pipeline, box/pie/heatmap extraction, and an optional
-  AI-assist layer.
+
+## History
+
+A desktop app (PySide6) was developed and later discontinued in favor of the pure
+skill — Claude Code natively provides what the GUI required manual clicks for. Its
+source remains at tag [`app-v0.2.0`](https://github.com/Shaowen-Ye/FigDataX/tree/app-v0.2.0).
 
 ## License
 

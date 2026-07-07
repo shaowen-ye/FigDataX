@@ -24,7 +24,7 @@ matplotlib/scipy are lazy.
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 from .core import (FigDataXError, InputError, CalibrationError, DetectionError,
                    auto_detect_plot_area, detect_axes_hough, remove_grid,

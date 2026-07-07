@@ -7,6 +7,18 @@ PY="$HOME/.claude/skills/FigDataX/.venv/bin/python"
 $PY -m scripts.figdatax <subcommand> ...
 ```
 
+## `geometry` — the engine geometry pass (start here)
+
+```bash
+$PY -m scripts.figdatax geometry IMAGE [--bbox L T R B] [--json OUT.json] [--annotate OUT.png]
+```
+
+One call: auto-detects the plot bbox, tick pixel positions per axis (`detect_ticks` —
+sub-pixel, with a `spacing_cv` confidence; `null` when the chart has no tick marks),
+and ready-to-use series HSV targets tagged markers/line/region (`suggest_series`).
+Prints the JSON and writes an annotated PNG to eyeball before calibrating.
+`spacing_cv > 0.15` prints a warning — treat those positions as suspect.
+
 ## `extract` — extract data points
 
 ```bash
@@ -53,6 +65,25 @@ $PY -m scripts.figdatax panels IMAGE [--layout 2x2|1x3|auto]
 $PY -m scripts.figdatax colors IMAGE --at X Y        # HSV/BGR/hex at a pixel
 $PY -m scripts.figdatax colors IMAGE --bbox L T R B  # dominant series colors
 ```
+
+## `xlsx` — gather figure CSVs into one Excel workbook
+
+```bash
+$PY -m scripts.figdatax xlsx SPEC.json
+```
+
+```json
+{
+  "out": "figures.xlsx",
+  "source": "Smith et al. 2024",
+  "figures": [
+    {"name": "Fig3", "csv": "/abs/fig3_extracted.csv",
+     "provenance": "Fig.3 | M1 | RMSE x=0.23% y=0.15% | 1 round"}
+  ]
+}
+```
+
+One sheet per figure (headers bold, frozen) + an Index and a Provenance sheet.
 
 ## `self-test` — fast synthetic self-check
 

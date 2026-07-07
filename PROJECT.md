@@ -1,45 +1,46 @@
 # FigDataX — project overview
 
-This repository ships **two products** from one codebase:
+One product: a **Claude Code skill** (plus its Python engine) for high-precision
+scientific figure data extraction. It loads when the folder lives at
+`~/.claude/skills/FigDataX`.
 
-1. **The FigDataX skill** (repo root) — a Claude Code skill + Python engine for
-   high-precision scientific figure data extraction. This is what loads when the folder
-   lives at `~/.claude/skills/FigDataX`.
-2. **The FigDataX desktop app** (`app/`) — a PySide6 macOS GUI that reuses the same
-   engine and adds a PDF full-text pipeline (detect data-bearing figures/tables, extract
-   them, export to Excel, and surface important data mentions with their in-document
-   location). Under active development.
+The scope is deliberately narrow: the user provides figure images (cropped or
+screenshotted from papers — single or multiple); the skill extracts the numbers,
+verifies them visually, and delivers CSV/Excel with provenance. No PDF ingestion, no
+table extraction, no text mining — those were tried and removed to keep the tool sharp.
 
 ## Layout
 
 ```
 FigDataX/
-├── SKILL.md                 # skill manifest + core workflow (must stay at root)
+├── SKILL.md                 # skill manifest + the autonomous extraction loop (root)
 ├── scripts/
 │   ├── figdatax/            # the extraction engine (Python package)
 │   └── setup.sh             # skill-local .venv bootstrap (uv)
 ├── references/              # progressive-disclosure docs loaded on demand
 ├── examples/                # demo figure + expected output
 ├── tests/                   # pytest suite (synthetic ground truth)
-├── app/                     # desktop GUI (PySide6) — reuses the engine
-├── requirements.txt         # engine/skill runtime deps
-└── CHANGELOG.md             # per-product changelog (Skill / App sections)
+├── requirements.txt         # runtime deps
+└── CHANGELOG.md             # release notes
 ```
 
-The engine lives at `scripts/figdatax/` and is imported as `from scripts.figdatax import ...`
-after putting the repo root on `sys.path`. The app imports the very same engine, so there
-is a single source of truth.
+The engine is imported as `from scripts.figdatax import ...` after putting the repo
+root on `sys.path`.
 
 ## Versioning & releases
 
-The skill and the app version independently, distinguished by tag prefix:
+Skill releases are tagged `skill-vX.Y.Z` (source install; see README for setup).
 
-- Skill releases: `skill-vX.Y.Z` (source install).
-- App releases: `app-vX.Y.Z` (unsigned `.dmg` / `.app.zip`; see [app/README.md](app/README.md)
-  for the Gatekeeper "right-click → Open" instructions).
+## History
+
+- A desktop app (PySide6; interactive digitizer, PDF pipeline, AI-assist layer) lived
+  in `app/` through `app-v0.2.0`, then was discontinued: Claude Code natively covers
+  what the GUI needed manual clicks for. Recover it with
+  `git checkout app-v0.2.0 -- app/`.
+- PDF ingestion / table extraction / data-mention mining existed briefly in the engine
+  and were removed in the same spirit — the user crops figures themselves.
 
 ## Getting started
 
-- **Use the skill**: see [SKILL.md](SKILL.md) (run `bash scripts/setup.sh`, then
-  `.venv/bin/python -m scripts.figdatax self-test`).
-- **Run the app from source**: see [app/README.md](app/README.md).
+See [SKILL.md](SKILL.md): run `bash scripts/setup.sh`, then
+`.venv/bin/python -m scripts.figdatax self-test`.

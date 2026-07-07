@@ -1,9 +1,42 @@
 # Changelog
 
-Versioning is independent per product: the **skill** (`skill-vX.Y.Z`) and the
-**desktop app** (`app-vX.Y.Z`).
+Releases are tagged `skill-vX.Y.Z`. (The discontinued desktop app used `app-vX.Y.Z`;
+see the App section at the bottom.)
 
 ## Skill
+
+### skill-v2.0.0 — 2026-07-07
+
+FigDataX becomes a single, focused product: an **agentic skill** that extracts data
+from user-provided figure images. The engine measures geometry; Claude reads semantics
+by vision; the user is consulted only at two well-defined gates. The Python API of
+v1.0.0 is fully preserved (additions only).
+
+**Added**
+- `detect_ticks()` — tick-mark pixel positions per axis (sub-pixel, spine-aware, keeps
+  log-axis decade majors, `spacing_cv` confidence signal, `None` when a chart has no
+  tick marks). Removes the "click each tick" step: the engine supplies positions, the
+  caller supplies only the values it reads.
+- `suggest_series()` — dominant colors + connected-component geometry → ready-to-use
+  HSV targets tagged markers/line/region, with near-duplicate k-means clusters merged.
+- `draw_geometry_overlay()` + `geometry` CLI subcommand — one call emits the geometry
+  JSON and an annotated PNG for visual verification before calibrating.
+- `export_figures()` + `xlsx` CLI subcommand — gather per-figure CSVs into one Excel
+  workbook (one sheet per figure + Index + Provenance with method/RMSE/rounds).
+- Self-test now also asserts tick recovery.
+
+**Changed**
+- SKILL.md rewritten as an autonomous 9-step extraction loop (classify → geometry →
+  verify → semantics → calibrate with a hard RMSE<1% gate → extract → validate
+  visually → iterate ≤3 rounds → deliver) with exactly two human gates and a batch
+  mode (subagent fan-out for 3+ figures).
+- CI collapsed to one job (pytest + self-test) triggered on main and `skill-v*` tags.
+
+**Removed**
+- The desktop app (`app/`, discontinued; source recoverable at tag `app-v0.2.0`).
+- PDF ingestion, table extraction, and data-mention mining (briefly present, removed
+  by design) — the user crops figure images themselves; the skill's one job is precise
+  extraction from those images. `pypdfium2`/`pdfplumber` are no longer dependencies.
 
 ### skill-v1.0.0 — 2026-07-06
 
@@ -52,7 +85,11 @@ gracefully when optional dependencies are absent.
 - SKILL.md rewritten with progressive disclosure (core workflow + `references/`), a
   mandatory pre-flight section, and an OpenCV-traps section.
 
-## App
+## App (discontinued 2026-07-07)
+
+The desktop app was discontinued with skill-v2.0.0 — Claude Code natively provides
+what the GUI required manual clicks for. Source recoverable at tag `app-v0.2.0`
+(`git checkout app-v0.2.0 -- app/`). Its GitHub releases were removed; the tags remain.
 
 ### app-v0.2.0 — 2026-07-06
 

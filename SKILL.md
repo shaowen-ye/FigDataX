@@ -1,254 +1,223 @@
 ---
 name: figdatax
-description: "FigDataX: High-precision scientific figure data extraction via axis-calibrated semi-automatic methods. Extracts numerical data from paper figures (bar, line, scatter, box, heatmap, pie, polar, stacked charts) with sub-pixel precision. Core approach: multi-point axis calibration + color-based detection. Also supports fully-automated color segmentation and Hough-line-guided curve tracing. Features: automatic plot area detection, adaptive grid removal, multi-point least-squares axis calibration, sub-pixel Gaussian centroid refinement, contour-based curve tracing, box/pie/heatmap extraction, and validation overlay. Use when the user wants to digitize a chart, extract data from a figure, get numbers from a graph, convert a plot to a data table. Also trigger on: '读取图中数据', '从图中提取数值', '图表数字化', '提取图表数据', 'plot digitizer', 'digitize figure', 'extract figure data', 'figure data extraction'."
+description: "FigDataX: High-precision scientific figure data extraction. Give it a figure image (or several) cropped/screenshotted from a paper and it runs an autonomous loop: engine detects the geometry (plot area, tick positions, series colors), Claude reads the semantics (tick values, legend) by vision, least-squares calibration with RMSE gating, sub-pixel color/morphology extraction, then Claude visually verifies a validation overlay and iterates. Supports scatter, line, bar (grouped/stacked), box, pie, heatmap, polar, error bars, log axes, multi-panel figures. Outputs CSV per figure + optional multi-sheet Excel + provenance. Use when the user wants to digitize a chart, extract data from a figure, get numbers from a graph, convert plots to data tables, batch-extract several figures. Also trigger on: '读取图中数据', '从图中提取数值', '图表数字化', '提取图表数据', '提取论文图数据', '批量提取图表', 'plot digitizer', 'digitize figure', 'extract figure data', 'figure data extraction'."
 ---
 
 # FigDataX — High-Precision Scientific Figure Data Extraction
 
-**FigDataX** = **Fig**ure **Data** e**X**traction. Extract numerical data from scientific
-figures with up to ±0.5% accuracy, centered on multi-point axis-calibrated extraction.
+**FigDataX** = **Fig**ure **Data** e**X**traction. Input: figure image(s) the user
+provides (cropped, screenshotted, or pasted from a paper). Output: the numbers, at up
+to ±0.5% accuracy, with a validation overlay proving it.
+
+**Division of labor** — the engine measures *geometry* (plot area, tick pixel
+positions, series colors, sub-pixel centroids); **you (Claude) read *semantics***
+(tick values, axis labels, legend names) with your own vision; the **user** is asked
+only at the two gates below. Run the loop autonomously; do not narrate each step.
 
 ---
 
 ## Environment & pre-flight (MANDATORY — do this first)
 
-FigDataX needs OpenCV, NumPy, pandas, matplotlib, and scipy. Resolve the interpreter in
-this exact order before running anything:
-
 ```bash
 SKILL_DIR="$HOME/.claude/skills/FigDataX"
 PY="$SKILL_DIR/.venv/bin/python"
-
-# 1. Prefer the skill-local venv.
-if [ -x "$PY" ] && "$PY" -c "import cv2, numpy, pandas" 2>/dev/null; then :; else
-    # 2. Bootstrap it (uses uv, falls back to python3 -m venv).
-    bash "$SKILL_DIR/scripts/setup.sh"
-fi
+[ -x "$PY" ] && "$PY" -c "import cv2, numpy, pandas" 2>/dev/null || bash "$SKILL_DIR/scripts/setup.sh"
+"$PY" -m scripts.figdatax self-test      # asserts <1% extraction error + tick detection
 ```
 
-Then confirm the environment is healthy with the built-in self-test:
-
-```bash
-"$PY" -m scripts.figdatax self-test    # synthesizes a chart, extracts it, asserts < 1% error
-```
-
-If the venv cannot be created, you may fall back to a `python3` that already imports
-`cv2, numpy, pandas` — but **explicitly tell the user** which features degrade
-(no matplotlib → no validation plot; no scipy → no `trace_curve`/`interpolate_curve`).
-Never silently produce lower-quality output.
+If the venv cannot be created, a `python3` that imports `cv2, numpy, pandas` may be
+used — but **tell the user** what degrades (no matplotlib → no validation plot; no
+scipy → no curve tracing). Never silently produce lower-quality output.
 
 ### Import path
-
-Add the skill root to `sys.path`, then import from the package:
 
 ```python
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.claude/skills/FigDataX"))
-from scripts.figdatax import (calibrate_axes_multipoint, auto_detect_plot_area,
-                              pick_color, extract_by_color_adaptive, create_validation_plot)
+from scripts.figdatax import (detect_ticks, suggest_series, auto_detect_plot_area,
+                              calibrate_axes_multipoint, pick_color,
+                              extract_by_color_adaptive, create_validation_plot)
 ```
 
-> The folder is **`FigDataX`** (capital F, D, X). On case-sensitive filesystems (Linux)
-> the path is case-sensitive — use `FigDataX` exactly.
+> The folder is **`FigDataX`** (capital F, D, X) — case-sensitive on Linux.
 
 ---
 
 ## OpenCV traps (the #1 source of extraction errors)
 
-FigDataX is built on OpenCV. Internalize these or extraction will silently go wrong:
-
-- **Images are BGR**, not RGB. `cv2.imread` returns blue-green-red order.
-- **HSV hue is `[0, 179]`** (degrees ÷ 2), *not* 0–360. S and V are `[0, 255]`.
-  Pure red ≈ H 0 (or 179); saturated markers have **V ≈ 255** (that is NOT background —
-  background is *low saturation*, not high value).
-- **Never guess a target HSV.** Call `pick_color(img, x, y)` on an actual marker to read
-  its exact HSV. Guessed values are the top cause of "0 detections".
-- Pixels are indexed **`img[y, x]`** (row first). Pixel **y increases downward**, so
-  data-space y is inverted relative to pixel y (calibration handles this).
-- `cv2.imread` returns **`None`** (does not raise) on a bad path. FigDataX's loaders
-  raise `InputError` instead, and normalize grayscale / RGBA / 16-bit inputs for you.
+- **Images are BGR**, not RGB. **HSV hue is `[0, 179]`**, not 0–360; S/V are `[0, 255]`.
+  Saturated markers have V≈255 — that is data, not background (background = low S).
+- **Never guess a target HSV** — use `suggest_series` or `pick_color` on a marker.
+- Pixels index as `img[y, x]`; **pixel y grows downward**, so the TOP tick has the
+  SMALLEST py and the LARGEST data value. Calibration handles it — pairing must too.
+- `cv2.imread` returns `None` on bad paths; FigDataX loaders raise `InputError` and
+  normalize grayscale/RGBA/16-bit inputs.
 
 ---
 
-## File paths & outputs
+## THE AUTONOMOUS LOOP (single figure)
 
-- **Input**: the user's image path (absolute or relative to their working directory).
-- **Output**: saved **in the same directory as the input image**, named after it:
-  - `{stem}_extracted.csv` — data table
-  - `{stem}_validation.png` — side-by-side original vs. reconstructed
-  - `{stem}_grid.png` — coordinate grid overlay (for manual reading)
+Run these steps end-to-end without asking the user, except at the gates.
 
-Use `os.path.dirname(image_path)` for the output directory — never the skill directory.
+### 0 · CLASSIFY — Read the image
 
----
+View the figure with the Read tool. Note: chart type; axis scale (linear/log/
+categorical); tick values printed on each axis; series count + legend + colors;
+marker shape (its **geometric center** is the data point); grid lines; panels
+(if multi-panel → `split_panels`, loop each panel).
 
-## Extraction methods
+### 1 · GEOMETRY — one engine call
 
-| Method | Name | Best for | Typical accuracy |
-|--------|------|----------|-----------------|
-| **M1** | **Calibrated Semi-Auto** | **All charts — default & preferred** | **±0.5–2%** |
-| M2 | Fully Automated | High-contrast charts with distinct colors | ±0.5–1% |
-| M3 | Hough + Curve Trace | Line charts, continuous curves | ±0.5–1% |
-
-**Always prefer M1.** It is the most accurate because it relies on human-verified axis
-reference points, not AI-guessed values. M2/M3 supplement it for clean, automated cases.
-
----
-
-## Method 1: Calibrated Semi-Auto (core workflow)
-
-### Step 1 — Load, view, classify
-
-Use the Read tool to view the figure. Identify: chart type; axes labels/units/scale
-(linear/log/reciprocal); whether X is **categorical** (skip X calibration, use indices)
-or **continuous**; tick values on each axis; data series count, legend, colors; marker
-shape/size (its **geometric center** is the data point); grid lines.
-
-### Step 2 — Detect the plot area
-
-```python
-from scripts.figdatax import auto_detect_plot_area
-bbox = auto_detect_plot_area(image_path)   # (left, top, right, bottom) or None
+```bash
+"$PY" -m scripts.figdatax geometry FIG.png --json geom.json --annotate geom.png
 ```
 
-If it returns `None` or looks wrong, determine the bbox from a grid overlay (Step 5) or
-ask the user.
+Returns plot bbox + `ticks.{x,y}.positions` (sub-pixel px, **sorted ascending**) +
+`series` (ready-to-use HSV targets tagged markers/line/region). Add `--bbox L T R B`
+if auto-detection failed.
 
-### Step 3 — Multi-point axis calibration (the key accuracy step)
+### 2 · VERIFY GEOMETRY — Read `geom.png` yourself
 
-Read each axis tick's pixel position and data value, then fit:
+Checklist: green bbox hugs the plot frame (not the labels)? magenta tick strokes sit
+on real tick marks? series swatches match what you saw in step 0? If the bbox is off:
+fix with `--bbox` and rerun once. If ticks are `null` (chart has no tick marks) or
+`spacing_cv > 0.15` (unreliable): **fall back to the grid overlay** —
+`"$PY" -m scripts.figdatax overlay FIG.png`, Read it, and locate tick pixel positions
+visually instead.
+
+### 3 · SEMANTICS — you read the values, the engine gave the pixels
+
+Pair tick *values* (read in step 0) with tick *positions* (step 1), in order:
+
+- **x-axis**: ascending px ↔ ascending printed values (left → right).
+- **y-axis**: ascending py ↔ **DESCENDING** printed values (top tick = largest value).
+  This is the #1 pairing bug — check it twice.
+- Count mismatch (e.g. 7 positions, 6 readable labels)? Re-Read a zoomed crop of the
+  axis; engine may have caught an unlabeled edge tick — drop the unlabeled ones.
+  Still unreadable → **GATE 1**.
+- Categorical x-axis: skip x calibration entirely; use category indices.
+
+### 4 · CALIBRATE — hard RMSE gate
 
 ```python
-from scripts.figdatax import calibrate_axes_multipoint
-cal = calibrate_axes_multipoint(
-    pixel_points_x=[85, 200, 315, 430], data_values_x=[0, 10, 20, 30],
-    pixel_points_y=[380, 285, 190, 95], data_values_y=[0, 25, 50, 75],
-    x_log=False, y_log=False)             # x_transform="reciprocal" for 1/x axes
-print(f"RMSE x={cal.x_rmse_pct:.2f}%  y={cal.y_rmse_pct:.2f}%")   # want < ~1%
-dx, dy = cal.pixel_to_data(px, py)        # forward
-px, py = cal.data_to_pixel(dx, dy)        # inverse (for overlays / re-projection)
+cal = calibrate_axes_multipoint(pixel_points_x=[...], data_values_x=[...],
+                                pixel_points_y=[...], data_values_y=[...],
+                                x_log=False, y_log=False)   # log axes: set the flag!
+assert cal.x_rmse_pct < 1.0 and cal.y_rmse_pct < 1.0, "mispaired ticks — re-pair, do NOT proceed"
 ```
 
-Use **3+ ticks per axis**. Log axes require positive tick values (else `CalibrationError`).
+RMSE ≥ 1% almost always means a mispaired or misread tick (or a missed log flag).
+Fix the pairing; never extract on a bad calibration.
 
-### Step 4 — Grid removal (only if grids interfere)
+### 5 · EXTRACT — per series
 
-```python
-from scripts.figdatax import remove_grid
-clean = remove_grid(image_path, method="adaptive")   # or "hough" / "color"
-```
-
-### Step 5 — Extract data points
-
-**Get the target color reliably**, then detect:
+For each series from `geom.json` (or after **GATE 2** if the legend↔color mapping is
+ambiguous):
 
 ```python
-from scripts.figdatax import pick_color, extract_by_color_adaptive
-target = pick_color(image_path, marker_x, marker_y)["hsv"]     # don't guess HSV
-det = extract_by_color_adaptive(clean, target, color_distance=25,
+det = extract_by_color_adaptive(FIG, tuple(s["hsv"]), color_distance=25,
                                 subpixel=True, auto_widen=True)
-# → [(cx, cy, area, confidence), ...]  (cx, cy = marker CENTER)
+rows = [(*cal.pixel_to_data(cx, cy), conf) for cx, cy, _a, conf in det]
 ```
 
-If markers are large, many series share a color, or you want a manual read, generate a
-grid overlay and read marker centers by eye:
+- `geometry == "line"` → `trace_curve(FIG, bbox, target_hsv=..., converter=cal)`.
+- Same-color multi-series → morphological pipeline
+  ([references/morphological-pipeline.md](references/morphological-pipeline.md)).
+- Box/pie/heatmap/polar/error bars → [references/special-cases.md](references/special-cases.md).
+
+### 6 · VALIDATE — Read the overlay yourself (always)
 
 ```python
-from scripts.figdatax import generate_grid_overlay
-generate_grid_overlay(image_path, f"{stem}_grid.png", plot_bbox=bbox)
+create_validation_plot(FIG, points, f"{stem}_validation.png")
 ```
 
-For **same-color multi-series** charts, use the morphological pipeline instead — see
-[references/morphological-pipeline.md](references/morphological-pipeline.md).
+Read the PNG and check: reconstructed shape matches the original? y-range matches the
+tick values you read? point count plausible (vs. what you counted in step 0)? any
+systematic offset (all points shifted one direction)?
 
-### Step 6 — Convert & save
+### 7 · ITERATE — max 3 rounds, then gate
 
-```python
-import pandas as pd
-rows = [(*cal.pixel_to_data(cx, cy), conf) for cx, cy, _, conf in det]
-df = pd.DataFrame(rows, columns=["x", "y", "confidence"])
-df.to_csv(f"{stem}_extracted.csv", index=False, encoding="utf-8-sig")
-```
+| Symptom on the overlay | Correction |
+|---|---|
+| Many points missing | raise `color_distance` (40→60→80) or check `auto_widen` warning for the suggested color |
+| Extra junk points | lower `color_distance`; exclude legend region; `remove_grid` first |
+| Two series merged | lower `color_distance`; or morphological pipeline |
+| Systematic offset | bbox included axis labels — re-run geometry with tighter `--bbox` |
+| y-values mirrored | you paired y ascending — flip to descending (step 3) |
+| Off by 10×/2× on one axis | misread tick value or missed log flag — redo steps 3–4 |
 
-### Step 7 — Validate (always)
+After 3 failed rounds: show the user the overlay, state what is wrong, ask how to
+proceed (this is the only other time you may ask).
 
-```python
-from scripts.figdatax import create_validation_plot
-create_validation_plot(image_path, [(r.x, r.y) for r in df.itertuples()],
-                       f"{stem}_validation.png")
-```
+### 8 · DELIVER
 
----
-
-## Method 2: Fully Automated
-
-For clean, high-contrast charts. See [references/special-cases.md](references/special-cases.md)
-for bar / scatter details.
-
-```python
-from scripts.figdatax import detect_data_colors, auto_extract_bars, auto_extract_scatter
-colors = dict(detect_data_colors(img, bbox, n_clusters=4))    # {name: (H,S,V)}
-bars = auto_extract_bars(img, bbox, converter=cal, colors_hsv=colors)
-pts = auto_extract_scatter(img, bbox, target_hsv=target, converter=cal)
-```
-
-## Method 3: Hough + Curve Trace (line charts, needs scipy)
-
-```python
-from scripts.figdatax import trace_curve
-curve = trace_curve(img, bbox, target_hsv=target, converter=cal, n_samples=200, subpixel=True)
-```
-
----
-
-## Other chart types
-
-`extract_boxplot`, `extract_pie`, `extract_heatmap`, `extract_polar`, `extract_error_bars`,
-`split_panels`, `interpolate_curve` — usage in
-[references/special-cases.md](references/special-cases.md).
-
-## Command-line interface
-
-Everything above is also available via subcommands (`extract`, `calibrate`, `overlay`,
-`panels`, `colors`, `self-test`) — see [references/cli.md](references/cli.md).
-
----
-
-## Efficiency guidelines
-
-**Do the extraction in ONE consolidated script**: read the image once, classify, then
-calibrate + detect + extract + validate in a single run. Avoid iterative pixel scanning.
-
-| Situation | Shortcut |
-|-----------|----------|
-| Categorical X (time labels, group names) | Use category indices; calibrate only Y |
-| Clean tick labels visible | Read tick values directly; multi-point calibrate |
-| No grid lines | Skip grid removal |
-| Well-separated colored series | Automated color detection |
-| All same-color markers | Morphological pipeline (reference) |
-
----
-
-## Output report format
+- `{stem}_extracted.csv` per figure (columns: series, x, y, confidence),
+  `{stem}_validation.png` — saved **next to the input image**, never in the skill dir.
+- Report (always include method + RMSE):
 
 ```
 === FigDataX Extraction Report ===
-Source: Figure 2a from Smith et al. (2024)
-Chart type: Grouped bar chart    |    Method: M1 Calibrated Semi-Auto
-Calibration RMSE: x=0.23%, y=0.15%    |    Points: 12    |    Est. accuracy: ±0.8%
-Saved: /path/to/figure2a_extracted.csv    |    Validation: /path/to/figure2a_validation.png
+Source: Figure 3, Smith et al. 2024 (user-provided crop)
+Chart: scatter, 2 series | Method: M1 auto-calibrated | Rounds: 1
+Calibration RMSE: x=0.23%, y=0.15% | Points: 24 | Est. accuracy: ±0.8%
+Saved: fig3_extracted.csv | Validation: fig3_validation.png
 ```
 
-Always state the method and calibration RMSE.
+---
+
+## HUMAN GATES — the only questions you may ask mid-loop
+
+- **GATE 1 (unreadable semantics)**: tick values/units still illegible after a zoomed
+  re-read → show the crop, ask for the values (AskUserQuestion).
+- **GATE 2 (series identity)**: legend↔color mapping ambiguous (no legend, N legend
+  entries ≠ N detected colors, colorblind-unsafe palette) → show the swatches, ask
+  which series is which.
+
+Everything else: decide yourself and proceed silently.
+
+---
+
+## BATCH — multiple figures
+
+The user may provide several images at once ("这几张图都提取一下").
+
+1. **1–2 figures**: run the loop sequentially.
+2. **3+ figures**: fan out **one general-purpose subagent per figure**, each with a
+   self-contained prompt: the image path, this loop (steps 0–8), and the report format.
+   Collect their CSVs; batch GATE questions together at the end rather than one-by-one.
+3. **Gather into Excel** (default deliverable for batches, on request for singles):
+
+```bash
+"$PY" -m scripts.figdatax xlsx spec.json
+# spec.json: {"out": "figures.xlsx", "source": "Smith et al. 2024",
+#   "figures": [{"name": "Fig3", "csv": ".../fig3_extracted.csv",
+#                "provenance": "Fig.3 | M1 | RMSE x=0.23% y=0.15% | 1 round"}, ...]}
+```
+
+One sheet per figure + a provenance sheet (method/RMSE/rounds per figure).
+
+---
+
+## Efficiency rules
+
+- **One consolidated script per figure** — classify once, then geometry + calibrate +
+  extract + validate in a single run. No iterative pixel scanning.
+- Do not re-Read the image between every step; Read it at step 0, the annotated
+  geometry at step 2, and the validation overlay at step 6. That is 3 image reads
+  per clean extraction.
+- Categorical x-axis → calibrate only y. No grid lines → skip `remove_grid`.
 
 ---
 
 ## References (load on demand)
 
 - [references/precision-and-troubleshooting.md](references/precision-and-troubleshooting.md)
-  — precision checklist, "0 detections" diagnosis, `color_distance` tuning, dependency tiers.
+  — precision checklist, "0 detections" diagnosis, `color_distance` tuning, tick-detection
+  failure modes, dependency tiers.
 - [references/morphological-pipeline.md](references/morphological-pipeline.md)
   — same-color multi-series detection and crossover handling.
 - [references/special-cases.md](references/special-cases.md)
-  — log/reciprocal, error bars, grouped/stacked bars, box/pie/heatmap, polar, panels, dual-Y.
-- [references/cli.md](references/cli.md) — full command-line reference.
+  — log/reciprocal axes, error bars, grouped/stacked bars, box/pie/heatmap, polar,
+  multi-panel, dual-Y.
+- [references/cli.md](references/cli.md) — full command-line reference
+  (`geometry`, `extract`, `calibrate`, `overlay`, `panels`, `colors`, `xlsx`, `self-test`).
