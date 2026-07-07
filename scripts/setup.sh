@@ -64,7 +64,6 @@ echo "Verifying dependencies..."
 "$VENV/bin/python" - <<'PY'
 import sys
 required = ["cv2", "numpy", "pandas", "matplotlib", "scipy", "openpyxl"]
-optional = ["pypdfium2"]   # PDF figure ingestion; warn but don't fail
 missing = []
 for name in required:
     try:
@@ -73,12 +72,6 @@ for name in required:
     except Exception as exc:  # noqa: BLE001
         missing.append(name)
         print(f"  ERR {name:12s} {exc}")
-for name in optional:
-    try:
-        mod = __import__(name)
-        print(f"  OK  {name:12s} {getattr(mod, '__version__', '?')} (optional, PDF)")
-    except Exception:  # noqa: BLE001
-        print(f"  WARN {name:11s} missing — PDF workflows (pdf-scan) unavailable")
 if missing:
     print(f"\nMissing/broken: {', '.join(missing)}", file=sys.stderr)
     sys.exit(1)

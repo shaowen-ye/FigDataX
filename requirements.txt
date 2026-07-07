@@ -10,7 +10,3 @@ scipy>=1.11
 openpyxl>=3.1
 
 # NOTE: scikit-image is intentionally NOT required — nothing in figdatax imports it.
-
-# PDF figure ingestion (pdf-figures / pdf-page): lazily imported — the engine
-# degrades gracefully without it, but it is installed by default so PDFs work.
-pypdfium2>=4.30

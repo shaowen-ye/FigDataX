@@ -421,8 +421,9 @@ def _detect_ticks_one_axis(gray, plot_bbox, axis, search_px, max_thickness,
             baseline = int(np.bincount(arr).argmax())     # most common run = spine
             keep = sorted((p, ln) for p, ln in zip(pos, lens) if ln > baseline)
         else:                                             # bare border
-            max_len = int(arr.max())
-            keep = sorted((p, ln) for p, ln in zip(pos, lens) if ln >= max_len - 1)
+            longest = int(arr.max())
+            keep = sorted((p, ln) for p, ln in zip(pos, lens) if ln >= longest - 1)
+        stroke_len = int(max((ln for _p, ln in keep), default=0))
         merged = []
         for p, ln in keep:
             if merged and p - merged[-1][-1][0] <= max_thickness:
@@ -436,7 +437,7 @@ def _detect_ticks_one_axis(gray, plot_bbox, axis, search_px, max_thickness,
         cv = float(np.std(gaps) / np.mean(gaps)) if len(gaps) and np.mean(gaps) else 1.0
         cand = {"positions": [round(c, 2) for c in centers],
                 "side": "out" if sign == outward else "in",
-                "stroke_len": max_len, "spacing_cv": round(cv, 4)}
+                "stroke_len": stroke_len, "spacing_cv": round(cv, 4)}
         if best is None or len(cand["positions"]) > len(best["positions"]):
             best = cand
     return best

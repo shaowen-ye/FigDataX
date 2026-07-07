@@ -7,8 +7,8 @@ universal output; this is the "export to Excel" convenience on top of it.
     export_figures(
         "paper_figures.xlsx",
         figures=[{"name": "Fig3", "csv": "/abs/fig3_extracted.csv",
-                  "provenance": "paper.pdf p.5 | M1 | RMSE x=0.21% y=0.15% | 2 rounds"}],
-        source_name="paper.pdf",
+                  "provenance": "Smith 2024 Fig.3 | M1 | RMSE x=0.21% y=0.15% | 2 rounds"}],
+        source_name="Smith et al. 2024",
     )
 """
 
