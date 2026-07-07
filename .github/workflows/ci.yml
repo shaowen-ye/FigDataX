@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["app-v*"]      # tag pushes run tests AND the build-dmg job below
+    tags: ["skill-v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -22,43 +22,13 @@ jobs:
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Skill — install engine deps and run pytest
+      - name: Install dependencies
         run: |
           uv venv .venv --python 3.12
           uv pip install --python .venv/bin/python -r requirements.txt pytest
-          PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q
 
-      - name: App — install deps and run headless smoke test
-        run: |
-          uv venv app/.venv --python 3.12
-          uv pip install --python app/.venv/bin/python -r app/requirements.txt
-          cd app
-          QT_QPA_PLATFORM=offscreen QT_LOGGING_RULES='*=false' \
-            PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m figdatax_app.smoke_test
+      - name: Run tests
+        run: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q
 
-  build-dmg:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/app-v')
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - name: Build unsigned .app and .dmg
-        run: bash app/build.sh
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: FigDataX-macos
-          path: |
-            app/dist/*.dmg
-            app/dist/*.app.zip
-      - name: Attach to the release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" app/dist/*.dmg app/dist/*.app.zip --clobber
+      - name: Self-test (exercises the cv2-only path)
+        run: .venv/bin/python -m scripts.figdatax self-test

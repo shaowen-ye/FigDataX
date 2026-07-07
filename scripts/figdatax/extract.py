@@ -16,6 +16,12 @@ from .core import (DetectionError, _hsv_distance, _load_bgr, _require, logger)
 from .calibrate import AxisCalibration, calibrate_axes
 
 
+def _hsv_scalar_distance(a, b) -> float:
+    """Euclidean distance between two (H, S, V) triples, hue circular and ×2-scaled."""
+    dh = min(abs(a[0] - b[0]), 180 - abs(a[0] - b[0])) * 2
+    return (dh ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+
+
 # ───────────────────────────────────────────────────────────────────
 #  Color-based centroid extraction
 # ───────────────────────────────────────────────────────────────────
@@ -200,6 +206,72 @@ def detect_data_colors(img_or_path, plot_bbox, n_clusters=4,
         h, s, v = (int(round(c)) for c in centers[idx])
         results.append((_hue_name(h, s, v), (h, s, v)))
     return results
+
+
+def suggest_series(img_or_path, plot_bbox, n_clusters: int = 6,
+                   min_fraction: float = 0.002, color_distance: float = 30.0) -> list:
+    """Suggest ready-to-use data series from a chart's colors and their geometry.
+
+    Wraps :func:`detect_data_colors`, then for each color measures how it is laid out
+    (connected-component analysis inside the plot area) so the caller can hand the
+    ``hsv`` straight to the color extractors without any eyedropper step, and knows
+    whether it is markers, a line, or a filled region. The legend name↔color mapping
+    is left to the caller's vision (that is a semantic, not geometric, judgment).
+
+    Returns dicts sorted by prevalence::
+
+        [{"name": "red", "hsv": [3, 212, 231], "pixel_fraction": 0.031,
+          "n_components": 11, "geometry": "markers"}]   # markers | line | region
+
+    Heuristics: many small compact blobs → "markers"; one/two long thin components →
+    "line"; otherwise → "region" (bars/areas/pie wedges).
+    """
+    img = _load_bgr(img_or_path)
+    left, top, right, bottom = (int(v) for v in plot_bbox)
+    area = max(1, (right - left) * (bottom - top))
+    hsv_full = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    # K-means often splits one visual color into several near-identical clusters;
+    # merge clusters whose HSV are within this distance so each real series appears once.
+    merged_colors = []
+    for name, hsv in detect_data_colors(img, plot_bbox, n_clusters=n_clusters):
+        if any(_hsv_scalar_distance(hsv, k) < 18 for _n, k in merged_colors):
+            continue
+        merged_colors.append((name, hsv))
+
+    out = []
+    for name, hsv in merged_colors:
+        dist = _hsv_distance(hsv_full, hsv)
+        mask = np.zeros(img.shape[:2], np.uint8)
+        mask[top:bottom, left:right] = (
+            dist[top:bottom, left:right] < color_distance).astype(np.uint8)
+        frac = float(mask.sum()) / area
+        if frac < min_fraction:
+            continue
+        n_lbl, _lbls, stats, _cent = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        comps = [stats[i] for i in range(1, n_lbl) if stats[i, cv2.CC_STAT_AREA] >= 4]
+        n_comp = len(comps)
+        # Fill ratio = component area / its bounding-box area. Markers and filled
+        # regions fill most of their box (~0.5-1.0); a thin winding line fills little.
+        fills = [st[cv2.CC_STAT_AREA] / max(1, st[cv2.CC_STAT_WIDTH] * st[cv2.CC_STAT_HEIGHT])
+                 for st in comps]
+        # Largest component's span across the plot width (a line stretches across it).
+        span = (max((st[cv2.CC_STAT_WIDTH] for st in comps), default=0)
+                / max(1, right - left))
+        med_fill = float(np.median(fills)) if fills else 0.0
+        # Median component size relative to the plot area: markers are small dots,
+        # bars/regions are large blocks.
+        rel_size = float(np.median([st[cv2.CC_STAT_AREA] for st in comps]) / area) \
+            if comps else 0.0
+        geometry = "region"
+        if n_comp >= 4 and med_fill >= 0.4 and rel_size < 0.005:
+            geometry = "markers"
+        elif n_comp <= 3 and med_fill < 0.3 and span > 0.4:
+            geometry = "line"
+        out.append({"name": name, "hsv": [int(v) for v in hsv],
+                    "pixel_fraction": round(frac, 4), "n_components": n_comp,
+                    "geometry": geometry})
+    return out
 
 
 # ───────────────────────────────────────────────────────────────────

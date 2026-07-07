@@ -6,18 +6,12 @@ __pycache__/
 .eggs/
 .pytest_cache/
 
-# Virtual environments (skill + app)
+# Virtual environment
 .venv/
-app/.venv/
-app/.venv-build/
 
 # Build / distribution artifacts
 build/
 dist/
-app/build/
-app/dist/
-*.app
-*.dmg
 
 # macOS
 .DS_Store

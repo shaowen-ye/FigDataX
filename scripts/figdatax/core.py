@@ -364,6 +364,157 @@ def generate_grid_overlay(img_or_path: ImageLike, output_path: Optional[str] = N
 
 
 # ───────────────────────────────────────────────────────────────────
+#  Tick-mark detection (autonomy helper)
+# ───────────────────────────────────────────────────────────────────
+
+def _detect_ticks_one_axis(gray, plot_bbox, axis, search_px, max_thickness,
+                           min_ticks):
+    """Locate tick-mark pixel positions along one axis. Returns a dict or None.
+
+    Ticks are short ink strokes attached to the axis border, perpendicular to it.
+    For the x-axis we scan the band just outside (below) and inside (above) the
+    bottom border; for the y-axis, outside (left) and inside (right) of the left
+    border. For each column (x) / row (y) we measure the length of the dark run
+    starting at the border, keep tick-like runs (short, border-attached), collapse
+    adjacent hits into one tick, then keep whichever side yields more ticks.
+    """
+    left, top, right, bottom = plot_bbox
+    dark = gray < min(160, int(gray.mean()))
+    is_x = axis == "x"
+    border = bottom if is_x else left
+    along_lo, along_hi = (left, right) if is_x else (top, bottom)
+
+    def _scan(sign):
+        # For x: sign +1 = downward/outward, -1 = upward/inward.
+        # For y: sign -1 = leftward/outward, +1 = rightward/inward.
+        # Returns the dark-run length from the border for every along-position.
+        pos, lens = [], []
+        for a in range(along_lo, along_hi + 1):
+            run = 0
+            for d in range(1, search_px + 1):
+                p = border + sign * d
+                yy, xx = (p, a) if is_x else (a, p)
+                if not (0 <= yy < gray.shape[0] and 0 <= xx < gray.shape[1]):
+                    break
+                if dark[yy, xx]:
+                    run += 1
+                else:
+                    break
+            if run >= 1:
+                pos.append(a)
+                lens.append(run)
+        return pos, lens
+
+    n_along = along_hi - along_lo + 1
+    best = None
+    outward = +1 if is_x else -1
+    for sign in (outward, -outward):
+        pos, lens = _scan(sign)
+        if len(pos) < min_ticks:
+            continue
+        # Distinguish two regimes. If most along-positions are dark, an axis spine
+        # runs along the border: ticks are the columns whose run PROTRUDES beyond the
+        # spine baseline. Otherwise (bare border, no spine) ticks are the only dark
+        # columns, and we keep the longest-stroke group (drops log/minor ticks).
+        arr = np.array(lens)
+        if len(pos) > 0.5 * n_along:                      # spine present
+            baseline = int(np.bincount(arr).argmax())     # most common run = spine
+            keep = sorted((p, ln) for p, ln in zip(pos, lens) if ln > baseline)
+        else:                                             # bare border
+            longest = int(arr.max())
+            keep = sorted((p, ln) for p, ln in zip(pos, lens) if ln >= longest - 1)
+        stroke_len = int(max((ln for _p, ln in keep), default=0))
+        merged = []
+        for p, ln in keep:
+            if merged and p - merged[-1][-1][0] <= max_thickness:
+                merged[-1].append((p, ln))
+            else:
+                merged.append([(p, ln)])
+        centers = sorted(float(np.mean([q[0] for q in grp])) for grp in merged)
+        if len(centers) < min_ticks:
+            continue
+        gaps = np.diff(centers)
+        cv = float(np.std(gaps) / np.mean(gaps)) if len(gaps) and np.mean(gaps) else 1.0
+        cand = {"positions": [round(c, 2) for c in centers],
+                "side": "out" if sign == outward else "in",
+                "stroke_len": stroke_len, "spacing_cv": round(cv, 4)}
+        if best is None or len(cand["positions"]) > len(best["positions"]):
+            best = cand
+    return best
+
+
+def detect_ticks(img_or_path: ImageLike, plot_bbox, axis: str = "both",
+                 search_px: int = 12, max_thickness: int = 5,
+                 min_ticks: int = 3) -> dict:
+    """Detect tick-mark **pixel positions** along the axes (best-effort).
+
+    This removes the human "click each tick" step: the engine reports *where* the
+    ticks are; the caller (Claude, reading the image) supplies only the *values* and
+    pairs them in order — **ascending px for x, descending py for y** (image y grows
+    downward, so the top tick has the smallest py and the largest value).
+
+    Returns ``{"x": {...} | None, "y": {...} | None}`` where each axis dict has
+    ``positions`` (subpixel px/py), ``side`` ("out"/"in"), ``stroke_len``, and
+    ``spacing_cv`` — the coefficient of variation of tick spacing. **spacing_cv > 0.15
+    means the positions are unreliable** (uneven spacing → misdetection); fall back to
+    the grid overlay. Uniform axes (incl. log, whose decades are pixel-equidistant)
+    give spacing_cv near 0.
+    """
+    img = _load_bgr(img_or_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    left, top, right, bottom = (int(v) for v in plot_bbox)
+    bbox = (left, top, right, bottom)
+    out = {}
+    for ax in (("x", "y") if axis == "both" else (axis,)):
+        out[ax] = _detect_ticks_one_axis(gray, bbox, ax, search_px,
+                                         max_thickness, min_ticks)
+    if axis != "both":
+        out.setdefault("x" if axis == "y" else "y", None)
+    return out
+
+
+def draw_geometry_overlay(img_or_path: ImageLike, plot_bbox, ticks=None,
+                          series=None, output_path: Optional[str] = None) -> np.ndarray:
+    """Annotate the engine's geometry pass for a one-glance visual check.
+
+    Draws the plot bbox, detected tick positions (magenta strokes with px labels),
+    and suggested series color swatches. The caller Reads the saved PNG to confirm
+    the bbox hugs the frame and ticks sit on real tick marks before calibrating.
+    """
+    img = _load_bgr(img_or_path).copy()
+    left, top, right, bottom = (int(v) for v in plot_bbox)
+    cv2.rectangle(img, (left, top), (right, bottom), (0, 200, 0), 2)
+
+    if ticks:
+        xk = ticks.get("x") or {}
+        for px in xk.get("positions", []):
+            px = int(round(px))
+            cv2.line(img, (px, bottom), (px, bottom + 10), (255, 0, 255), 1)
+            cv2.putText(img, str(px), (px - 8, bottom + 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 255), 1)
+        yk = ticks.get("y") or {}
+        for py in yk.get("positions", []):
+            py = int(round(py))
+            cv2.line(img, (left - 10, py), (left, py), (255, 0, 255), 1)
+            cv2.putText(img, str(py), (max(0, left - 40), py + 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 255), 1)
+
+    for i, s in enumerate(series or []):
+        hsv = s.get("hsv") if isinstance(s, dict) else s
+        swatch = bgr_of_hsv(tuple(int(v) for v in hsv))
+        y0 = top + 6 + i * 18
+        cv2.rectangle(img, (right - 60, y0), (right - 44, y0 + 14), swatch, -1)
+        cv2.rectangle(img, (right - 60, y0), (right - 44, y0 + 14), (0, 0, 0), 1)
+        name = s.get("name", "") if isinstance(s, dict) else ""
+        cv2.putText(img, name, (right - 40, y0 + 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1)
+
+    if output_path:
+        cv2.imwrite(output_path, img)
+    return img
+
+
+# ───────────────────────────────────────────────────────────────────
 #  Multi-panel splitting
 # ───────────────────────────────────────────────────────────────────
 

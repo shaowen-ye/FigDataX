@@ -59,16 +59,17 @@ def run_self_test() -> int:
     left, right, top, bottom = 80, 560, 40, 360
     cv2.rectangle(img, (left, top), (right, bottom), (0, 0, 0), 2)
     # Data: y = 2x, x in [0,10] over pixel x[left..right], y in [0,25] over [bottom..top].
-    truth = []
+    truth, x_tick_px = [], []
     for x in range(0, 11, 2):
         y = 2.0 * x
         px = int(left + x / 10.0 * (right - left))
         py = int(bottom - y / 25.0 * (bottom - top))
         cv2.circle(img, (px, py), 6, (0, 0, 255), -1)  # red (BGR)
+        cv2.line(img, (px, bottom + 1), (px, bottom + 7), (0, 0, 0), 1)  # x tick
         truth.append((x, y))
+        x_tick_px.append(px)
 
     cal = calibrate_axes_multipoint([left, right], [0, 10], [bottom, top], [0, 25])
-    red_hsv = pick_color(img, int(left + 0.5 * (right - left)), bottom - 100)  # not guaranteed a marker
     det = extract_by_color_adaptive(img, (0, 255, 255), color_distance=30, subpixel=True)
     got = sorted(cal.pixel_to_data(cx, cy) for cx, cy, _, _ in det)
 
@@ -81,6 +82,16 @@ def run_self_test() -> int:
     print(f"  detected {len(det)}/{len(truth)} points; max y error {max_err:.3f} "
           f"(tol 0.25 = 1% of range)")
     print(f"  calibration RMSE: x={cal.x_rmse:.4g}, y={cal.y_rmse:.4g}")
+
+    # Tick auto-detection: recover the drawn x ticks within ±1.5 px.
+    from .core import detect_ticks
+    xt = detect_ticks(img, (left, top, right, bottom), axis="x")["x"]
+    tick_ok = xt is not None and sum(
+        any(abs(p - t) <= 1.5 for p in xt["positions"]) for t in x_tick_px) >= 4
+    print(f"  tick detection: {'OK' if tick_ok else 'FAIL'} "
+          f"({0 if xt is None else len(xt['positions'])} x-ticks found)")
+
+    ok = ok and tick_ok
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
@@ -172,6 +183,51 @@ def _cmd_colors(args):
         print(f"  {name:8s} HSV {hsv}")
 
 
+def _cmd_geometry(args):
+    import json as _json
+    from .core import auto_detect_plot_area, detect_ticks, draw_geometry_overlay
+    from .extract import suggest_series
+
+    bbox = tuple(args.bbox) if args.bbox else auto_detect_plot_area(args.image)
+    if bbox is None:
+        raise FigDataXError("No --bbox and auto-detect failed; supply --bbox L T R B.")
+    ticks = detect_ticks(args.image, bbox)
+    series = suggest_series(args.image, bbox)
+
+    import cv2
+    img = cv2.imread(args.image)
+    result = {"image_size": [img.shape[1], img.shape[0]],
+              "plot_bbox": list(bbox), "ticks": ticks, "series": series}
+
+    annotate = args.annotate or _default_out(args.image, "geometry.png")
+    draw_geometry_overlay(args.image, bbox, ticks=ticks, series=series,
+                          output_path=annotate)
+    result["annotated"] = annotate
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            _json.dump(result, fh, ensure_ascii=False, indent=1)
+    print(_json.dumps(result, ensure_ascii=False, indent=1))
+    print(f"\nAnnotated overlay: {annotate}"
+          + (f"\nGeometry JSON: {args.json}" if args.json else ""))
+    for ax in ("x", "y"):
+        t = ticks.get(ax)
+        if t and t["spacing_cv"] > 0.15:
+            print(f"WARNING: {ax}-axis tick spacing is uneven (cv={t['spacing_cv']}); "
+                  f"positions may be unreliable — verify against the overlay or use "
+                  f"the grid overlay instead.")
+
+
+def _cmd_xlsx(args):
+    import json as _json
+    from .export import export_figures
+    with open(args.spec, "r", encoding="utf-8") as fh:
+        spec = _json.load(fh)
+    out = export_figures(spec["out"], figures=spec.get("figures", []),
+                         source_name=spec.get("source", ""))
+    print(f"workbook saved: {out}")
+
+
 # ───────────────────────────────────────────────────────────────────
 #  Parser
 # ───────────────────────────────────────────────────────────────────
@@ -222,6 +278,21 @@ def build_parser():
     co.add_argument("--at", type=int, nargs=2, metavar=("X", "Y"))
     co.add_argument("--n", type=int, default=4)
     co.set_defaults(func=_cmd_colors)
+
+    ge = sub.add_parser("geometry",
+                        help="engine geometry pass: plot bbox + tick positions + "
+                             "series colors, as JSON + an annotated PNG to eyeball")
+    ge.add_argument("image")
+    ge.add_argument("--bbox", type=int, nargs=4, metavar=("L", "T", "R", "B"))
+    ge.add_argument("--json", help="also write the geometry JSON to this path")
+    ge.add_argument("--annotate", help="annotated overlay PNG (default: <img>_geometry.png)")
+    ge.set_defaults(func=_cmd_geometry)
+
+    wk = sub.add_parser("xlsx",
+                        help="gather extracted figure CSVs into one Excel workbook")
+    wk.add_argument("spec", help='JSON: {"out", "source", "figures": '
+                                 '[{"name","csv","provenance"}]}')
+    wk.set_defaults(func=_cmd_xlsx)
 
     st = sub.add_parser("self-test", help="run a fast synthetic extraction self-check")
     st.set_defaults(func=lambda a: sys.exit(run_self_test()))
